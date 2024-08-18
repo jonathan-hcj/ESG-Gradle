@@ -16,13 +16,14 @@ import java.security.NoSuchAlgorithmException;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Base64;
 
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
+
+import org.apache.commons.lang3.StringUtils;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
@@ -60,6 +61,9 @@ public class App {
                 if (!postResult.success){
                     System.out.println(postResult.errorMessage);
                 }
+                else {
+                    System.out.println(String.format("Customer %s created", customer.customerRef));   
+                }
             }
         }
 
@@ -76,26 +80,44 @@ public class App {
 
         var customerList = new ArrayList<Customer>();
         var result = new Result<ArrayList<Customer>>();
+        var errorList = new ArrayList<String>();
 
         try {
             var fileReader = new FileReader(filePath);
+            var lineCount = 1;
             String[] fields ;
 
             try (var csvReader = new CSVReader(fileReader)) {
 
                 while ((fields = csvReader.readNext()) != null) {
-                    var customer = new Customer();
-                    customer.customerRef = fields[0];
-                    customer.customerName = fields[1];
-                    customer.addressLine1 = fields[2];
-                    customer.addressLine2 = fields[3];
-                    customer.town = fields[4];
-                    customer.county = fields[5];
-                    customer.country = fields[6];
-                    customer.postcode = fields[7];
-                    
-                    customerList.add(customer);
-                    System.out.println(Arrays.toString(fields));
+
+                    /* allow empty lines */ 
+                    if (fields.length == 1 && StringUtils.isEmpty(fields[0])) {
+                    }
+
+                    /* test for completeness */
+                    else if (fields.length != 8) {
+                        errorList.add(String.format("Line %d: 8 fields are required per customer", lineCount));
+                    }
+                    else if (StringUtils.isEmpty(fields[0])){
+                        errorList.add(String.format("Line %d: Customer reference missing", lineCount));
+                    }
+                    else {
+                  
+                        var customer = new Customer();
+                        customer.customerRef = fields[0];
+                        customer.customerName = fields[1];
+                        customer.addressLine1 = fields[2];
+                        customer.addressLine2 = fields[3];
+                        customer.town = fields[4];
+                        customer.county = fields[5];
+                        customer.country = fields[6];
+                        customer.postcode = fields[7];
+                        
+                        customerList.add(customer); 
+                     }
+
+                     lineCount++;
                 }
             }        
             result.data = customerList;
@@ -107,6 +129,10 @@ public class App {
             result.setFail(String.format("IOException: %s", e.getMessage()));
         }
  
+        if (!errorList.isEmpty()) {
+            result.setFail(String.format("Some customers were not valid in the csv:\r\n%s", String.join("\r\n", errorList)));
+        }
+
         return result;
     }
     
@@ -135,10 +161,18 @@ public class App {
     
             int responseCode = http.getResponseCode();
             if (responseCode != 201) {
-                result.setFail(String.format("Record not created: %s", http.getResponseMessage()));
+
+                var responseBuilder = new StringBuilder();
+                var inputLine = "";
+
+                try (java.io.BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(http.getErrorStream()))) {
+                    while ((inputLine = bufferedReader.readLine()) != null) {
+                        responseBuilder.append(inputLine);
+                    }
+                }
+                result.setFail(String.format("Record not created: %s", responseBuilder.toString()));
                 result.data = responseCode;
-            }
-            System.out.println("POST Response Code :: " + responseCode);
+             }
         } 
         catch (IOException e) {
             result.setFail(String.format("IOException: %s", e.getMessage()));
